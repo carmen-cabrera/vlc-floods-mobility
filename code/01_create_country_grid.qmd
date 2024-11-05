@@ -1,0 +1,89 @@
+---
+title: "Create a country grid"
+format: html
+editor: visual
+---
+
+# Clear environment
+
+```{r}
+rm(list=ls())
+```
+
+```{r}
+wd = getwd()
+```
+
+# Dependencies
+
+```{r}
+library(tidyverse)
+library(sf)
+```
+
+# Read data
+
+## FB gridded population data
+
+```{r}
+fb_pop <- read_csv("../data/input/facebook/population/tiles/2709531524194929_2024-10-30_2024-11-04_csv/2709531524194929_2024-10-30_1600.csv")
+```
+
+## Country boundary
+
+```{r}
+country_shp <- st_read("../data/input/boundaries/gadm41_ESP.gpkg", layer='ADM_ADM_0')
+
+# unify polygons
+single_country_shp <- st_union(country_shp) %>% st_transform(crs="EPSG:3857")
+
+ggplot() +
+  geom_sf(data = single_country_shp,
+          color = "gray60",
+          size = 0.1)
+```
+
+# Function to create a country grid
+
+## Create function
+
+```{r}
+create_country_grid <- function(db, border) {
+  db.geo <- db %>% st_as_sf(coords = c("longitude", "latitude"), crs = "EPSG:4326") %>% st_transform(crs="EPSG:3857")
+  # Compute distance between every pair of points and output it as a matrix of distances
+  dist_df <- as.data.frame(st_distance(db.geo))
+  #Extract minimum distance in the matrix of distances
+  min_dist <- min(dist_df[lower.tri(dist_df)])
+#Buffer distance
+buffer_dist = 100*min_dist
+# Create grid of polygons (regular squares) with cellsize determined by min_dist
+# The grid should be created based on the bounding box of the buffered initial geometry to make sure the whole country is included, even the areas with no signal
+grid_buffer <- st_make_grid(st_buffer(db.geo, buffer_dist),
+                            cellsize = min_dist,
+                            offset = st_bbox(db.geo)[c("xmin", "ymin")] - c(buffer_dist+min_dist*.5, buffer_dist+ min_dist*.5),
+                            crs = if (missing(db.geo)) NA_crs_ else st_crs(db.geo),
+                            what = "polygons",
+                            square = TRUE)
+grid_buffer_crop <- st_intersection(st_geometry(grid_buffer), st_geometry(border))
+return(grid_buffer_crop)
+}
+```
+
+## Create gridded country boundaries and save
+
+```{r}
+gridded_shp <- create_country_grid(fb_pop, single_country_shp)
+
+st_write(gridded_shp, "/Users/carmen/Library/CloudStorage/OneDrive-TheUniversityofLiverpool/gridded_shp.shp")
+
+ggplot() +
+  geom_sf(data = gridded_shp,
+          color = "gray60",
+          size = 0.1)
+```
+
+```{r}
+grid <- st_read("/Users/carmen/Library/CloudStorage/OneDrive-TheUniversityofLiverpool/gridded_shp.shp")
+
+grid
+```
